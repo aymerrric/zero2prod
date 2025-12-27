@@ -16,7 +16,7 @@ RUN cargo build --release --bin zero2prod
 
 
 
-FROM debian:bullseye-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 RUN apt-get update -y \
     && apt-get install -y --no-install-recommends openssl ca-certificates \
     && apt-get autoremove -y \

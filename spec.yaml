@@ -1,0 +1,16 @@
+name : zero2prod
+region : fra
+services:
+- name: zero2prod
+  dockerfile_path: Dockerfile
+  source_dir: .
+  github:
+    branch: main
+    deploy_on_push: true
+    repo: aymerrric/zero2prod
+  health_check:
+    http_path: /health_check
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  routes:
+  - path: /
