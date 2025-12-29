@@ -116,6 +116,7 @@ async fn subscribe_return_400_is_not_ok() {
         ("name=sdfsdf", "missing the email"),
         ("email=ursula_le_guin%40gmail.com", "missing name"),
         ("", "Missing email and name"),
+        ("name=Ursula&email=definetelynotanemail", "fake email"),
     ];
     for (test, error) in tests {
         let response = client

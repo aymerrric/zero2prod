@@ -2,9 +2,9 @@ use config;
 use secrecy::{ExposeSecret, SecretBox};
 use serde::Deserialize;
 use serde_aux::field_attributes::deserialize_number_from_string;
+use sqlx::ConnectOptions;
 use sqlx::postgres::PgConnectOptions;
 use sqlx::postgres::PgSslMode;
-use sqlx::ConnectOptions;
 #[derive(Deserialize, Debug)]
 pub struct ApplicationSettings {
     #[serde(deserialize_with = "deserialize_number_from_string")]
@@ -48,7 +48,7 @@ impl DatabaseSettings {
     pub fn with_db(&self) -> PgConnectOptions {
         let mut options = self.without_db().database(&self.database_name);
         options = options.log_statements(tracing::log::LevelFilter::Trace);
-        
+
         options
     }
 }

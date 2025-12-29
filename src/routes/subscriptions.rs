@@ -1,9 +1,13 @@
+use crate::domain::{NewSubscriber, SubscriberEmail, SuscriberName};
 use actix_web::{HttpResponse, Responder, post, web};
 use chrono::Utc;
 use serde::Deserialize;
 use sqlx::PgPool;
 use tracing;
+use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
+
+
 
 #[derive(Deserialize)]
 pub struct SubscriptionForm {
@@ -23,7 +27,19 @@ async fn subscribe(
     form: web::Form<SubscriptionForm>,
     connection: web::Data<PgPool>,
 ) -> impl Responder {
-    match insert_suscriber(&connection, &form).await {
+    let name = match SuscriberName::parse(form.0.name) {
+        Ok(name) => name,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let email = match SubscriberEmail::parse(form.0.email){
+        Ok(email) => email,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let newsubscriber = NewSubscriber {
+        name,
+        email
+    };
+    match insert_suscriber(&connection, &newsubscriber).await {
         Ok(_) => {
             tracing::info!("Info of the new user have been saved ");
             HttpResponse::Ok().finish()
@@ -33,17 +49,20 @@ async fn subscribe(
             HttpResponse::InternalServerError().finish()
         }
     };
-    HttpResponse::Ok()
+    HttpResponse::Ok().finish()
 }
 
-#[tracing::instrument(name = "Start subscription querry", skip(pool, form))]
-pub async fn insert_suscriber(pool: &PgPool, form: &SubscriptionForm) -> Result<(), sqlx::Error> {
+#[tracing::instrument(name = "Start subscription querry", skip(pool, newsubscriber))]
+pub async fn insert_suscriber(
+    pool: &PgPool,
+    newsubscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"INSERT INTO subscriptions (id, email, name, subscribed_at)
                     VALUES($1, $2, $3, $4)"#,
         Uuid::new_v4(),
-        form.email,
-        form.name,
+        newsubscriber.email.as_ref(),
+        newsubscriber.name.as_ref(),
         Utc::now()
     )
     .execute(pool)
@@ -53,4 +72,15 @@ pub async fn insert_suscriber(pool: &PgPool, form: &SubscriptionForm) -> Result<
         e
     })?;
     Ok(())
+}
+
+pub fn is_valid(name: &str) -> bool {
+    let is_empty = name.trim().is_empty();
+    let is_too_long = name.graphemes(true).count() > 256;
+
+    let forbidden_characters = ['/', '{', '}', '(', ')', '/', '\\', '"'];
+
+    let contains_forbidden_characters = name.chars().any(|g| forbidden_characters.contains(&g));
+
+    !(contains_forbidden_characters || is_too_long || is_empty)
 }
