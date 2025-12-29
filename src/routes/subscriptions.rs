@@ -24,7 +24,7 @@ async fn subscribe(
     form: web::Form<SubscriptionForm>,
     connection: web::Data<PgPool>,
 ) -> impl Responder {
-    let newsubscriber: NewSubscriber = match form.0.try_into(){
+    let newsubscriber: NewSubscriber = match form.0.try_into() {
         Ok(newsubscriber) => newsubscriber,
         Err(_) => return HttpResponse::BadRequest().finish(),
     };
@@ -63,13 +63,12 @@ pub async fn insert_suscriber(
     Ok(())
 }
 
-
-impl TryFrom<SubscriptionForm> for NewSubscriber{
+impl TryFrom<SubscriptionForm> for NewSubscriber {
     type Error = String;
     fn try_from(value: SubscriptionForm) -> Result<Self, Self::Error> {
         let name = SuscriberName::parse(value.name)?;
         let email = SubscriberEmail::parse(value.email)?;
-       
-    Ok(NewSubscriber { name, email })
+
+        Ok(NewSubscriber { name, email })
     }
 }

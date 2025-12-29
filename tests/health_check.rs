@@ -4,6 +4,7 @@ use std::net::TcpListener;
 use uuid;
 use zero2prod::{
     configuration::{DatabaseSettings, get_configuration},
+    email_client,
     telemetry::{get_subscriber, init_subscriber},
 };
 
@@ -36,7 +37,18 @@ async fn spawn_app() -> TestApp {
     configuration.database.database_name = uuid::Uuid::new_v4().to_string();
     let pool = configure_database(&configuration.database).await;
 
-    let server = zero2prod::startup::run(listner, pool.clone()).expect("Should have open the app");
+    let sender_email = configuration
+        .email_client
+        .sender()
+        .expect("Invalid sender email address.");
+    let email_client = email_client::EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email,
+        configuration.email_client.authorization_token,
+    );
+
+    let server = zero2prod::startup::run(listner, pool.clone(), email_client)
+        .expect("Should have open the app");
 
     let _ = actix_web::rt::spawn(server);
 
