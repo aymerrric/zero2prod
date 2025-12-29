@@ -4,10 +4,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use sqlx::PgPool;
 use tracing;
-use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
-
-
 
 #[derive(Deserialize)]
 pub struct SubscriptionForm {
@@ -27,17 +24,9 @@ async fn subscribe(
     form: web::Form<SubscriptionForm>,
     connection: web::Data<PgPool>,
 ) -> impl Responder {
-    let name = match SuscriberName::parse(form.0.name) {
-        Ok(name) => name,
+    let newsubscriber: NewSubscriber = match form.0.try_into(){
+        Ok(newsubscriber) => newsubscriber,
         Err(_) => return HttpResponse::BadRequest().finish(),
-    };
-    let email = match SubscriberEmail::parse(form.0.email){
-        Ok(email) => email,
-        Err(_) => return HttpResponse::BadRequest().finish(),
-    };
-    let newsubscriber = NewSubscriber {
-        name,
-        email
     };
     match insert_suscriber(&connection, &newsubscriber).await {
         Ok(_) => {
@@ -74,13 +63,13 @@ pub async fn insert_suscriber(
     Ok(())
 }
 
-pub fn is_valid(name: &str) -> bool {
-    let is_empty = name.trim().is_empty();
-    let is_too_long = name.graphemes(true).count() > 256;
 
-    let forbidden_characters = ['/', '{', '}', '(', ')', '/', '\\', '"'];
-
-    let contains_forbidden_characters = name.chars().any(|g| forbidden_characters.contains(&g));
-
-    !(contains_forbidden_characters || is_too_long || is_empty)
+impl TryFrom<SubscriptionForm> for NewSubscriber{
+    type Error = String;
+    fn try_from(value: SubscriptionForm) -> Result<Self, Self::Error> {
+        let name = SuscriberName::parse(value.name)?;
+        let email = SubscriberEmail::parse(value.email)?;
+       
+    Ok(NewSubscriber { name, email })
+    }
 }

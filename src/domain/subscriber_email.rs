@@ -21,12 +21,12 @@ impl AsRef<str> for SubscriberEmail {
 
 #[cfg(test)]
 mod tests {
-    use fake::locales;
-    use quickcheck_macros::quickcheck;
-    use quickcheck::{Gen};
     use super::SubscriberEmail;
-    use claim::{assert_err, };
-    use fake::{locales::Data};
+    use claim::assert_err;
+    use fake::locales;
+    use fake::locales::Data;
+    use quickcheck::Gen;
+    use quickcheck_macros::quickcheck;
 
     #[test]
     fn empty_string_is_rejected() {
@@ -45,25 +45,26 @@ mod tests {
     }
 
     #[quickcheck]
-    fn email_is_valid(s : ValidEmailFixture) ->bool
-    {
+    fn email_is_valid(s: ValidEmailFixture) -> bool {
         (SubscriberEmail::parse(s.0)).is_ok()
     }
-
 
     #[derive(Debug, Clone)]
     struct ValidEmailFixture(String);
 
-    impl quickcheck::Arbitrary for ValidEmailFixture{
+    impl quickcheck::Arbitrary for ValidEmailFixture {
         fn arbitrary(g: &mut Gen) -> Self {
-            let user_name = g.choose::<&str>(locales::EN::NAME_FIRST_NAME).unwrap().to_lowercase();
+            let user_name = g
+                .choose::<&str>(locales::EN::NAME_FIRST_NAME)
+                .unwrap()
+                .to_lowercase();
             let domains = ["com", "net", "fr", "org", "edu"];
             let domain = g.choose(&domains).unwrap();
             ValidEmailFixture(format!("{user_name}@example.{domain}"))
-        } 
+        }
     }
 
-    impl AsRef<str> for ValidEmailFixture{
+    impl AsRef<str> for ValidEmailFixture {
         fn as_ref(&self) -> &str {
             &self.0
         }
