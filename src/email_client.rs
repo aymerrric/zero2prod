@@ -1,5 +1,5 @@
 use crate::domain::SubscriberEmail;
-use reqwest::{Client};
+use reqwest::Client;
 use secrecy::{ExposeSecret, SecretBox};
 use serde::Serialize;
 
@@ -24,8 +24,12 @@ impl EmailClient {
         base_url: String,
         sender: SubscriberEmail,
         authorization_token: SecretBox<String>,
+        timeout : std::time::Duration
     ) -> EmailClient {
-        let http_client = Client::new();
+        let http_client = Client::builder()
+            .timeout(timeout)
+            .build()
+            .unwrap();
         EmailClient {
             base_url,
             sender,
@@ -50,7 +54,8 @@ impl EmailClient {
             text_body: content,
         };
 
-        self.http_client
+        self
+            .http_client
             .post(&url)
             .json(&request_body)
             .header(
@@ -58,7 +63,8 @@ impl EmailClient {
                 self.authorization_token.expose_secret(),
             )
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
 
         Ok(())
     }
@@ -67,7 +73,9 @@ impl EmailClient {
 #[cfg(test)]
 mod tests {
 
+
     use super::*;
+    use claim::{assert_err, assert_ok};
     use fake::Faker;
     use fake::faker::lorem::en::{Paragraph, Sentence};
     use fake::{Fake, faker::internet::en::SafeEmail};
@@ -95,12 +103,75 @@ mod tests {
         }
     }
 
+    fn subject() -> String{
+        Sentence(1..2).fake()
+    }
+    fn content() -> String{
+        Paragraph(1..10).fake()
+    }
+    fn email() -> SubscriberEmail {
+        SubscriberEmail::parse(SafeEmail().fake()).unwrap()
+    }
+
+    fn email_client(base_url : String) -> EmailClient{
+        EmailClient::new(base_url, email(), SecretBox::new(Faker.fake()), std::time::Duration::from_millis(200))
+    }
+
+    #[actix_web::test]
+    async fn send_email_respond_with_500_should_not_be_ok() {
+        let mock_server = wiremock::MockServer::start().await;
+        let email_client = email_client(mock_server.uri());
+        let response_template =
+            ResponseTemplate::new(200).set_delay(std::time::Duration::from_mins(3));
+        Mock::given(header_exists("X-Postmark-Server-Token"))
+            .and(header("Content-Type", "application/json"))
+            .and(path("/email"))
+            .and(method("POST"))
+            .and(SendEmailBodyMatcher)
+            .respond_with(response_template)
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+        let subscriber_email = email();
+        let subject: String = subject();
+        let content: String = content();
+        // Act
+        let outcome = email_client
+            .send_email(subscriber_email, &subject, &content, &content)
+            .await;
+
+        assert_err!(outcome);
+    }
+
+    #[actix_web::test]
+    async fn send_email_respond_in_3_minutes_should_be_err() {
+        let mock_server = wiremock::MockServer::start().await;
+        let email_client = email_client(mock_server.uri());
+
+        Mock::given(header_exists("X-Postmark-Server-Token"))
+            .and(header("Content-Type", "application/json"))
+            .and(path("/email"))
+            .and(method("POST"))
+            .and(SendEmailBodyMatcher)
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+        let subscriber_email = email();
+        let subject: String = subject();
+        let content: String = content();
+        // Act
+        let outcome = email_client
+            .send_email(subscriber_email, &subject, &content, &content)
+            .await;
+
+        assert_err!(outcome);
+    }
     #[actix_web::test]
     async fn send_email_fires_http_request() {
         let mock_server = wiremock::MockServer::start().await;
-        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
-        let email_client =
-            EmailClient::new(mock_server.uri(), sender, SecretBox::new(Faker.fake()));
+        let email_client = email_client(mock_server.uri());
+       
         Mock::given(header_exists("X-Postmark-Server-Token"))
             .and(header("Content-Type", "application/json"))
             .and(path("/email"))
@@ -110,12 +181,14 @@ mod tests {
             .expect(1)
             .mount(&mock_server)
             .await;
-        let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
-        let subject: String = Sentence(1..2).fake();
-        let content: String = Paragraph(1..10).fake();
+        let subscriber_email = email();
+        let subject: String = subject();
+        let content: String = content();
         // Act
-        let _ = email_client
+        let outcome = email_client
             .send_email(subscriber_email, &subject, &content, &content)
             .await;
+
+        assert_ok!(outcome);
     }
 }
