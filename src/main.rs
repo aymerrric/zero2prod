@@ -29,6 +29,13 @@ async fn main() -> std::io::Result<()> {
     let connection_pool = PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_secs(2))
         .connect_lazy_with(configuration.database.with_db());
+
+    //run migration
+    sqlx::migrate!("./migrations")
+        .run(&connection_pool)
+        .await
+        .expect("failed to migrate the database");
+
     let address = format!(
         "{}:{}",
         configuration.application.host, configuration.application.port

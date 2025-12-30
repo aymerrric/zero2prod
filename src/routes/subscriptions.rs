@@ -47,8 +47,8 @@ pub async fn insert_suscriber(
     newsubscriber: &NewSubscriber,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        r#"INSERT INTO subscriptions (id, email, name, subscribed_at)
-                    VALUES($1, $2, $3, $4)"#,
+        r#"INSERT INTO subscriptions (id, email, name, subscribed_at, status_subscription)
+                    VALUES($1, $2, $3, $4, 'confirmed')"#,
         Uuid::new_v4(),
         newsubscriber.email.as_ref(),
         newsubscriber.name.as_ref(),
