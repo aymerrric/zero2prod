@@ -1,8 +1,8 @@
 use once_cell::sync::Lazy;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
+use wiremock::MockServer;
 use zero2prod::configuration::{DatabaseSettings, get_configuration};
 use zero2prod::startup::{Application, get_connection_pool};
-
 use zero2prod::telemetry::{get_subscriber, init_subscriber};
 
 static TRACING: Lazy<()> = Lazy::new(|| {
@@ -21,9 +21,13 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 pub async fn spawn_app() -> TestApp {
     Lazy::force(&TRACING);
 
+    let email_server = MockServer::start().await;
+
     let mut configuration = get_configuration().expect("Failed to get config");
     configuration.database.database_name = uuid::Uuid::new_v4().to_string();
     configuration.application.port = 0;
+    configuration.email_client.base_url = email_server.uri();
+
     let application = Application::build(configuration.clone())
         .await
         .expect("Failed to build app");
@@ -34,6 +38,7 @@ pub async fn spawn_app() -> TestApp {
     TestApp {
         address,
         db_pool: get_connection_pool(&configuration.database),
+        email_server,
     }
 }
 
@@ -62,6 +67,7 @@ pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
 pub struct TestApp {
     pub address: String,
     pub db_pool: PgPool,
+    pub email_server: MockServer,
 }
 
 impl TestApp {

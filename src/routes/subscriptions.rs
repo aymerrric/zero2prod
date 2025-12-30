@@ -1,4 +1,5 @@
 use crate::domain::{NewSubscriber, SubscriberEmail, SuscriberName};
+use crate::email_client::EmailClient;
 use actix_web::{HttpResponse, Responder, post, web};
 use chrono::Utc;
 use serde::Deserialize;
@@ -13,7 +14,7 @@ pub struct SubscriptionForm {
 }
 #[tracing::instrument(
     name = "Adding a new subscriber",
-    skip(form, connection),
+    skip(form, connection, email_client),
     fields(
         subscriber_email = %form.email,
         subcriber_name = %form.name
@@ -23,22 +24,20 @@ pub struct SubscriptionForm {
 async fn subscribe(
     form: web::Form<SubscriptionForm>,
     connection: web::Data<PgPool>,
+    email_client: web::Data<EmailClient>,
 ) -> impl Responder {
     let newsubscriber: NewSubscriber = match form.0.try_into() {
         Ok(newsubscriber) => newsubscriber,
         Err(_) => return HttpResponse::BadRequest().finish(),
     };
-    match insert_suscriber(&connection, &newsubscriber).await {
-        Ok(_) => {
-            tracing::info!("Info of the new user have been saved ");
-            HttpResponse::Ok().finish()
-        }
-        Err(e) => {
-            tracing::error!("Could not save the info of the new user because : {:?}", e,);
-            HttpResponse::InternalServerError().finish()
-        }
+    if insert_suscriber(&connection, &newsubscriber).await.is_err() {
+        return HttpResponse::InternalServerError().finish();
     }
 
+    if send_email(&email_client, newsubscriber).await.is_err() {
+        return HttpResponse::InternalServerError().finish();
+    }
+    HttpResponse::Ok().finish()
 }
 
 #[tracing::instrument(name = "Start subscription querry", skip(pool, newsubscriber))]
@@ -61,6 +60,29 @@ pub async fn insert_suscriber(
         e
     })?;
     Ok(())
+}
+
+#[tracing::instrument(name = "Send an email", skip(email_client, newsubscriber))]
+pub async fn send_email(
+    email_client: &EmailClient,
+    newsubscriber: NewSubscriber,
+) -> Result<(), reqwest::Error> {
+    let confirmation_link = "https://my-api.com/subscriptions/confirm";
+    email_client
+        .send_email(
+            newsubscriber.email,
+            "Welcome!",
+            &format!(
+                "Welcome to our newsletter!<br />\
+                    Click <a href=\"{}\">here</a> to confirm your subscription.",
+                confirmation_link
+            ),
+            &format!(
+                "Welcome to our newsletter!\nVisit {} to confirm your subscription.",
+                confirmation_link
+            ),
+        )
+        .await
 }
 
 impl TryFrom<SubscriptionForm> for NewSubscriber {
