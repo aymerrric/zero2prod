@@ -1,8 +1,7 @@
-use sqlx::{Connection, Executor, PgConnection, PgPool};
-use std::net::TcpListener;
-use zero2prod::configuration::{get_configuration, DatabaseSettings};
-use zero2prod::email_client::EmailClient;
 use once_cell::sync::Lazy;
+use sqlx::{Connection, Executor, PgConnection, PgPool};
+use zero2prod::configuration::{DatabaseSettings, get_configuration};
+use zero2prod::startup::{Application, get_connection_pool};
 
 use zero2prod::telemetry::{get_subscriber, init_subscriber};
 
@@ -22,38 +21,21 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 pub async fn spawn_app() -> TestApp {
     Lazy::force(&TRACING);
 
-    let listner = TcpListener::bind("127.0.0.1:0").expect("Should have bind the listner");
-    let port = listner.local_addr().unwrap().port();
-    let adress = format!("http://127.0.0.1:{}", port);
-
     let mut configuration = get_configuration().expect("Failed to get config");
     configuration.database.database_name = uuid::Uuid::new_v4().to_string();
-    let pool = configure_database(&configuration.database).await;
-
-    let sender_email = configuration
-        .email_client
-        .sender()
-        .expect("Invalid sender email address.");
-    let timeout = configuration.email_client.timeout();
-    let email_client = EmailClient::new(
-        configuration.email_client.base_url,
-        sender_email,
-        configuration.email_client.authorization_token,
-        timeout
-    );
-
-    let server = zero2prod::startup::run(listner, pool.clone(), email_client)
-        .expect("Should have open the app");
-
-    let _ = actix_web::rt::spawn(server);
+    configuration.application.port = 0;
+    let application = Application::build(configuration.clone())
+        .await
+        .expect("Failed to build app");
+    configure_database(&configuration.database).await;
+    let address = format!("http://127.0.0.1:{}", application.port());
+    let _ = actix_web::rt::spawn(application.run_until_stop());
 
     TestApp {
-        adress,
-        db_pool: pool,
+        address,
+        db_pool: get_connection_pool(&configuration.database),
     }
 }
-
-
 
 pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
     let mut connection = PgConnection::connect_with(&config.without_db())
@@ -78,6 +60,18 @@ pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
 }
 
 pub struct TestApp {
-    pub adress: String,
+    pub address: String,
     pub db_pool: PgPool,
+}
+
+impl TestApp {
+    pub async fn post_subscription(&self, body: String) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(format!("{}/subscription", &self.address))
+            .body(body)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .send()
+            .await
+            .expect("Failed to send subscritpion")
+    }
 }

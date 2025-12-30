@@ -1,13 +1,13 @@
 use crate::domain::SubscriberEmail;
 use reqwest::Client;
-use secrecy::{ExposeSecret, SecretBox};
+use secrecy::{ExposeSecret, Secret};
 use serde::Serialize;
 
 pub struct EmailClient {
     pub sender: SubscriberEmail,
     pub http_client: Client,
     pub base_url: String,
-    pub authorization_token: SecretBox<String>,
+    pub authorization_token: Secret<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -23,13 +23,10 @@ impl EmailClient {
     pub fn new(
         base_url: String,
         sender: SubscriberEmail,
-        authorization_token: SecretBox<String>,
-        timeout : std::time::Duration
+        authorization_token: Secret<String>,
+        timeout: std::time::Duration,
     ) -> EmailClient {
-        let http_client = Client::builder()
-            .timeout(timeout)
-            .build()
-            .unwrap();
+        let http_client = Client::builder().timeout(timeout).build().unwrap();
         EmailClient {
             base_url,
             sender,
@@ -54,8 +51,7 @@ impl EmailClient {
             text_body: content,
         };
 
-        self
-            .http_client
+        self.http_client
             .post(&url)
             .json(&request_body)
             .header(
@@ -73,13 +69,11 @@ impl EmailClient {
 #[cfg(test)]
 mod tests {
 
-
     use super::*;
     use claim::{assert_err, assert_ok};
     use fake::Faker;
     use fake::faker::lorem::en::{Paragraph, Sentence};
     use fake::{Fake, faker::internet::en::SafeEmail};
-    use secrecy::SecretBox;
     use wiremock::{
         Mock, ResponseTemplate,
         matchers::{header, header_exists, method, path},
@@ -103,18 +97,23 @@ mod tests {
         }
     }
 
-    fn subject() -> String{
+    fn subject() -> String {
         Sentence(1..2).fake()
     }
-    fn content() -> String{
+    fn content() -> String {
         Paragraph(1..10).fake()
     }
     fn email() -> SubscriberEmail {
         SubscriberEmail::parse(SafeEmail().fake()).unwrap()
     }
 
-    fn email_client(base_url : String) -> EmailClient{
-        EmailClient::new(base_url, email(), SecretBox::new(Faker.fake()), std::time::Duration::from_millis(200))
+    fn email_client(base_url: String) -> EmailClient {
+        EmailClient::new(
+            base_url,
+            email(),
+            Secret::new(Faker.fake()),
+            std::time::Duration::from_millis(200),
+        )
     }
 
     #[actix_web::test]
@@ -171,7 +170,7 @@ mod tests {
     async fn send_email_fires_http_request() {
         let mock_server = wiremock::MockServer::start().await;
         let email_client = email_client(mock_server.uri());
-       
+
         Mock::given(header_exists("X-Postmark-Server-Token"))
             .and(header("Content-Type", "application/json"))
             .and(path("/email"))
