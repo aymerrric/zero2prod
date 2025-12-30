@@ -37,8 +37,8 @@ async fn subscribe(
             tracing::error!("Could not save the info of the new user because : {:?}", e,);
             HttpResponse::InternalServerError().finish()
         }
-    };
-    HttpResponse::Ok().finish()
+    }
+
 }
 
 #[tracing::instrument(name = "Start subscription querry", skip(pool, newsubscriber))]
