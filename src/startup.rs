@@ -7,20 +7,26 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::net::TcpListener;
 use tracing_actix_web::TracingLogger;
 
+pub struct ApplicationBaseUrl(pub String);
+
 pub fn run(
     listener: TcpListener,
     connection: PgPool,
     email_client: email_client::EmailClient,
+    base_url: String,
 ) -> Result<Server, std::io::Error> {
     let connection_pool = web::Data::new(connection);
     let email_client = web::Data::new(email_client);
+    let base_url = web::Data::new(ApplicationBaseUrl(base_url));
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
             .service(routes::health_check)
             .service(routes::subscribe)
+            .service(routes::confirm)
             .app_data(connection_pool.clone())
             .app_data(email_client.clone())
+            .app_data(base_url.clone())
     })
     .listen(listener)?
     .run();
@@ -61,7 +67,13 @@ impl Application {
             timeout,
         );
         let port = listener.local_addr().unwrap().port();
-        let server = run(listener, connection_pool, email_client)?;
+        let server = run(
+            listener,
+            connection_pool,
+            email_client,
+            configuration.application.base_url,
+        )?;
+
         Ok(Self { port, server })
     }
 

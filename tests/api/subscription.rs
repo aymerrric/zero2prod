@@ -1,11 +1,11 @@
 use crate::helpers::spawn_app;
 use sqlx::{Connection, PgConnection};
 use wiremock::matchers::{method, path};
-use wiremock::{Match, Mock, ResponseTemplate};
+use wiremock::{Mock, ResponseTemplate};
 use zero2prod::configuration::get_configuration;
 #[actix_web::test]
 async fn subscribe_return_a_200_is_ok() {
-    let body = "name=le%20gun&email=ursula_le_guin%40gmail.com";
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     let app = spawn_app().await;
 
     Mock::given(path("/email"))
@@ -13,6 +13,7 @@ async fn subscribe_return_a_200_is_ok() {
         .respond_with(ResponseTemplate::new(200))
         .mount(&app.email_server)
         .await;
+
     let configuration = get_configuration().expect("Failed to get the configuration");
 
     let _connexion = PgConnection::connect_with(&configuration.database.without_db())
@@ -61,13 +62,14 @@ async fn subscribe_return_a_200_is_ok_and_saves_data() {
         .respond_with(ResponseTemplate::new(200))
         .mount(&app.email_server)
         .await;
+
     let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
     let response = app.post_subscription(body.to_string()).await;
 
     assert_eq!(200, response.status().as_u16());
     assert_eq!(Some(0), response.content_length());
 
-    let saved = sqlx::query!("SELECT email, name FROM subscriptions",)
+    let saved = sqlx::query!("SELECT email, name, status_subscription FROM subscriptions",)
         .fetch_one(&app.db_pool.clone())
         .await
         .expect("Should have been able to fetch email and name from subscription");
@@ -107,21 +109,7 @@ async fn should_send_link_on_subscription() {
     app.post_subscription(body.to_string()).await;
 
     let email_request = &app.email_server.received_requests().await.unwrap()[0];
-    let body: serde_json::Value = serde_json::from_slice(&email_request.body).unwrap();
+    let links = app.get_confirmation_links(email_request);
 
-    let get_link = |s: &str| {
-        let links: Vec<_> = linkify::LinkFinder::new()
-            .links(s)
-            .filter(|l| *l.kind() == linkify::LinkKind::Url)
-            .collect();
-        assert_eq!(links.len(), 1);
-        links[0].as_str().to_owned()
-    };
-
-    let html_link = get_link(&body["HtmlBody"].as_str().unwrap());
-    let text_link = get_link(&body["TextBody"].as_str().unwrap());
-
-    assert_eq!(html_link, text_link);
+    assert_eq!(links.html, links.plain_text);
 }
-
-

@@ -1,4 +1,5 @@
 use once_cell::sync::Lazy;
+use reqwest::Url;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use wiremock::MockServer;
 use zero2prod::configuration::{DatabaseSettings, get_configuration};
@@ -27,18 +28,19 @@ pub async fn spawn_app() -> TestApp {
     configuration.database.database_name = uuid::Uuid::new_v4().to_string();
     configuration.application.port = 0;
     configuration.email_client.base_url = email_server.uri();
-
     let application = Application::build(configuration.clone())
         .await
         .expect("Failed to build app");
+    let port = application.port();
     configure_database(&configuration.database).await;
-    let address = format!("http://127.0.0.1:{}", application.port());
+    let address = format!("http://127.0.0.1:{}", port);
     let _ = actix_web::rt::spawn(application.run_until_stop());
 
     TestApp {
         address,
         db_pool: get_connection_pool(&configuration.database),
         email_server,
+        port: port,
     }
 }
 
@@ -68,6 +70,7 @@ pub struct TestApp {
     pub address: String,
     pub db_pool: PgPool,
     pub email_server: MockServer,
+    pub port: u16,
 }
 
 impl TestApp {
@@ -80,4 +83,28 @@ impl TestApp {
             .await
             .expect("Failed to send subscritpion")
     }
+
+    pub fn get_confirmation_links(&self, email_request: &wiremock::Request) -> ConfirmationLinks {
+        let body: serde_json::Value = email_request
+            .body_json()
+            .expect("Failed to read the body of the mail request");
+        let get_link = |s: &str| {
+            let links: Vec<_> = linkify::LinkFinder::new()
+                .links(s)
+                .filter(|l| *l.kind() == linkify::LinkKind::Url)
+                .collect();
+            assert_eq!(links.len(), 1, "Could not parse the link");
+            let mut link = Url::parse(links[0].as_str()).expect("failed to parse the link");
+            link.set_port(Some(self.port)).unwrap();
+            link
+        };
+        let plain_text = get_link(&body["TextBody"].as_str().unwrap());
+        let html = get_link(&body["HtmlBody"].as_str().unwrap());
+        ConfirmationLinks { plain_text, html }
+    }
+}
+
+pub struct ConfirmationLinks {
+    pub html: reqwest::Url,
+    pub plain_text: reqwest::Url,
 }

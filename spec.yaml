@@ -18,6 +18,9 @@ services:
   - key: APP__DATABASE__DATABASE_NAME
     scope: RUN_TIME
     value: ${newsletter.DATABASE}
+  - key : APP__APPLICATION__BASE_URL
+    scope : RUN_TIME
+    value: ${APP_URL}
   dockerfile_path: Dockerfile
   source_dir: .
   github:
