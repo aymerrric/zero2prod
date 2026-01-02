@@ -1,4 +1,6 @@
-use actix_web::{HttpResponse, Responder, web};
+use crate::routes::subscriptions::error_chain_fmt;
+use actix_web::{HttpResponse, ResponseError, web};
+use anyhow::Context;
 use serde::Deserialize;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -12,37 +14,27 @@ pub struct Parameters {
 pub async fn confirm(
     parameters: web::Query<Parameters>,
     pool: web::Data<PgPool>,
-) -> impl Responder {
-    let mut transaction = match pool.begin().await {
-        Ok(transaction) => transaction,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
-
-    let id = match get_subscriber_id_from_token(
-        &parameters.into_inner().subscription_token,
-        &mut transaction,
-    )
-    .await
-    {
-        Ok(opt) => opt,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
+) -> Result<HttpResponse, ConfirmationError> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .context("Failed to acquire a pool connection")?;
+    let id = get_subscriber_id_from_token(&parameters.subscription_token, &mut transaction)
+        .await
+        .context("Failed to get subscriber id")?;
     match id {
-        None => return HttpResponse::Unauthorized().finish(),
+        None => return Ok(HttpResponse::Unauthorized().finish()),
         Some(subscriber_id) => {
-            if confirm_token(subscriber_id, &mut transaction)
+            confirm_token(subscriber_id, &mut transaction)
                 .await
-                .is_err()
-            {
-                return HttpResponse::InternalServerError().finish();
-            }
+                .context("Failed to confirm the token")?;
         }
     }
-    if transaction.commit().await.is_err() {
-        HttpResponse::InternalServerError().finish()
-    } else {
-        HttpResponse::Ok().finish()
-    }
+    transaction
+        .commit()
+        .await
+        .context("Failed to commit the transaction into the database")?;
+    Ok(HttpResponse::Ok().finish())
 }
 
 #[tracing::instrument(name = "Confirm the id", skip(id, transaction))]
@@ -82,3 +74,15 @@ pub async fn get_subscriber_id_from_token(
     })?;
     Ok(saved.map(|r| r.subscriptions_id))
 }
+
+#[derive(thiserror::Error)]
+#[error(transparent)]
+pub struct ConfirmationError(#[from] anyhow::Error);
+
+impl std::fmt::Debug for ConfirmationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+impl ResponseError for ConfirmationError {}

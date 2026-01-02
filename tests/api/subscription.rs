@@ -113,3 +113,17 @@ async fn should_send_link_on_subscription() {
 
     assert_eq!(links.html, links.plain_text);
 }
+
+#[actix_web::test]
+pub async fn suscribe_fail_if_error_in_database() {
+    let app = spawn_app().await;
+    let _configuration = get_configuration().expect("Failed to get configuration");
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    sqlx::query!("ALTER TABLE subscriptions_tokens DROP COLUMN subscriptions_tokens;",)
+        .execute(&app.db_pool)
+        .await
+        .unwrap();
+    let response = app.post_subscription(body.to_string()).await;
+    assert_eq!(response.status().as_u16(), 500);
+}

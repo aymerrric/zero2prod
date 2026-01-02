@@ -1,7 +1,10 @@
+use std::fmt::Display;
+
 use crate::domain::{NewSubscriber, SubscriberEmail, SuscriberName};
 use crate::email_client::EmailClient;
 use crate::startup::ApplicationBaseUrl;
-use actix_web::{HttpResponse, Responder, post, web};
+use actix_web::{HttpResponse, post, web};
+use anyhow::Context;
 use chrono::Utc;
 use rand::distr::Alphanumeric;
 use rand::{Rng, rng};
@@ -29,35 +32,28 @@ async fn subscribe(
     connection: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
     base_url: web::Data<ApplicationBaseUrl>,
-) -> impl Responder {
-    let newsubscriber: NewSubscriber = match form.0.try_into() {
-        Ok(newsubscriber) => newsubscriber,
-        Err(_) => return HttpResponse::BadRequest().finish(),
-    };
-    let mut transaction: sqlx::Transaction<'_, sqlx::Postgres> = match connection.begin().await {
-        Ok(transaction) => transaction,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
-
-    let id = match insert_suscriber(&mut transaction, &newsubscriber).await {
-        Ok(id) => id,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
-
-    let token = generate_random_token();
-    if store_token(&mut transaction, id, &token).await.is_err() {
-        return HttpResponse::InternalServerError().finish();
-    }
-    if send_email(&email_client, newsubscriber, base_url, &token)
+) -> Result<HttpResponse, SubscribeError> {
+    let new_subscriber: NewSubscriber =
+        form.0.try_into().map_err(SubscribeError::ValidationError)?;
+    let mut transaction = connection
+        .begin()
         .await
-        .is_err()
-    {
-        return HttpResponse::InternalServerError().finish();
-    }
-    match transaction.commit().await {
-        Ok(()) => HttpResponse::Ok().finish(),
-        Err(_) => HttpResponse::InternalServerError().finish(),
-    }
+        .context("Failed to acquire a connection from the pool")?;
+    let subscriber_id = insert_suscriber(&mut transaction, &new_subscriber)
+        .await
+        .context("Failed to insert the user into database")?;
+    let token = generate_random_token();
+    store_token(&mut transaction, subscriber_id, &token)
+        .await
+        .context("Failed to store the token into the database")?;
+    transaction
+        .commit()
+        .await
+        .context("Failed to commit the transaction into the database")?;
+    send_email(&email_client, new_subscriber, base_url, &token)
+        .await
+        .context("Failed to send confirmation email")?;
+    Ok(HttpResponse::Ok().finish())
 }
 
 #[tracing::instrument(name = "Start subscription querry", skip(transaction, newsubscriber))]
@@ -97,7 +93,7 @@ pub async fn send_email(
     );
     email_client
         .send_email(
-            newsubscriber.email,
+            &newsubscriber.email,
             "Welcome!",
             &format!(
                 "Welcome to our newsletter!<br />\
@@ -130,13 +126,12 @@ pub fn generate_random_token() -> String {
         .collect()
 }
 
-
-#[tracing::instrument (name = "Store token for subscription", skip(transaction, id, token))]
+#[tracing::instrument(name = "Store token for subscription", skip(transaction, id, token))]
 pub async fn store_token(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     id: Uuid,
     token: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), StoreTokenError> {
     sqlx::query!(
         r#"INSERT INTO subscriptions_tokens (subscriptions_tokens ,subscriptions_id)
     VALUES ($1, $2)"#,
@@ -147,7 +142,60 @@ pub async fn store_token(
     .await
     .map_err(|e| {
         tracing::error!("Could not store subscription token bacause {}", e);
-        e
+        StoreTokenError(e)
     })?;
     Ok(())
+}
+
+#[derive(Debug)]
+pub struct StoreTokenError(sqlx::Error);
+
+impl Display for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Could not store the token")
+    }
+}
+
+impl std::error::Error for StoreTokenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+pub fn error_chain_fmt(
+    e: &impl std::error::Error,
+    f: &mut std::fmt::Formatter,
+) -> std::fmt::Result {
+    write!(f, "{}\n", e)?;
+    let mut current = e.source();
+    while let Some(cause) = current {
+        writeln!(f, "{}\n", cause)?;
+        current = cause.source();
+    }
+    Ok(())
+}
+
+impl std::fmt::Debug for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+impl actix_web::ResponseError for SubscribeError {
+    fn status_code(&self) -> actix_web::http::StatusCode {
+        match self {
+            SubscribeError::ValidationError(_) => actix_web::http::StatusCode::BAD_REQUEST,
+            SubscribeError::UnexpectedError(_) => {
+                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
+            }
+        }
+    }
+}
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error(transparent)]
+    UnexpectedError(#[from] anyhow::Error),
 }
