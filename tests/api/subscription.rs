@@ -127,3 +127,5 @@ pub async fn suscribe_fail_if_error_in_database() {
     let response = app.post_subscription(body.to_string()).await;
     assert_eq!(response.status().as_u16(), 500);
 }
+
+

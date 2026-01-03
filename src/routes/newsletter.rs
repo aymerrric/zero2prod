@@ -1,12 +1,19 @@
 use crate::{
-    domain::SubscriberEmail,
-    email_client::{ EmailClient},
-    routes::subscriptions::error_chain_fmt,
+    domain::SubscriberEmail, email_client::EmailClient, routes::subscriptions::error_chain_fmt,
 };
-use actix_web::{HttpResponse, ResponseError, web};
-use anyhow::{Context};
+use actix_web::http::header::{HeaderMap, HeaderValue};
+use actix_web::http::{StatusCode, header};
+use actix_web::{HttpRequest, HttpResponse, ResponseError, web};
+use anyhow::Context;
+use base64::prelude::*;
+use secrecy::{ExposeSecret, Secret};
 use serde::Deserialize;
-use sqlx::{PgPool};
+use sqlx::PgPool;
+#[derive(Deserialize)]
+pub struct Credential {
+    username: String,
+    password: Secret<String>,
+}
 
 #[derive(Deserialize)]
 pub struct Mail {
@@ -20,12 +27,20 @@ pub struct MailContent {
     pub text: String,
 }
 
+
+#[tracing::instrument (name = "Publish newsletter", skip(connection, email_client, mail_to_send, request))]
 #[actix_web::post("/newsletter")]
 pub async fn newsletter(
     connection: web::Data<PgPool>,
     email_client: web::Data<EmailClient>,
     mail_to_send: web::Json<Mail>,
+    request: HttpRequest,
 ) -> Result<HttpResponse, NewsletterError> {
+    let credential = basic_auth(&request.headers()).map_err(NewsletterError::AuthError)?;
+
+    tracing::Span::current().record("username", &tracing::field::display(&credential.username));
+    let id = validate_credential(&connection, &credential).await?;
+    tracing::Span::current().record("id", &tracing::field::display(&id));
     let saved = get_confirmed_subscribers(&connection)
         .await
         .context("Failed to fetch the database")?;
@@ -79,7 +94,9 @@ WHERE status_subscription = 'confirmed'
 #[derive(thiserror::Error)]
 pub enum NewsletterError {
     #[error(transparent)]
-    CouldNotReadIntoTheDatabase(#[from] anyhow::Error),
+    UnexpectedError(#[from] anyhow::Error),
+    #[error("Authentification failed")]
+    AuthError(#[source] anyhow::Error),
 }
 
 impl std::fmt::Debug for NewsletterError {
@@ -87,9 +104,79 @@ impl std::fmt::Debug for NewsletterError {
         error_chain_fmt(self, f)
     }
 }
-impl ResponseError for NewsletterError {}
+impl ResponseError for NewsletterError {
+    fn status_code(&self) -> actix_web::http::StatusCode {
+        match self {
+            NewsletterError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            NewsletterError::AuthError(_) => StatusCode::UNAUTHORIZED,
+        }
+    }
+    fn error_response(&self) -> HttpResponse {
+        match self {
+            NewsletterError::UnexpectedError(_) => {
+                HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+            NewsletterError::AuthError(_) => {
+                let mut response = HttpResponse::new(StatusCode::UNAUTHORIZED);
+                let header_value = HeaderValue::from_str(r#"Basic realm="publish""#).unwrap();
+                response
+                    .headers_mut()
+                    // actix_web::http::header provides a collection of constants
+                    // for the names of several well-known/standard HTTP headers
+                    .insert(header::WWW_AUTHENTICATE, header_value);
+                response
+            }
+        }
+    }
+}
 
 #[derive(sqlx::FromRow)]
 pub struct ConfirmedSubscriber {
     email: SubscriberEmail,
+}
+
+fn basic_auth(header: &HeaderMap) -> Result<Credential, anyhow::Error> {
+    let mut value = header
+        .get("Authorization")
+        .context("The request does not contain authentication")?
+        .to_str()
+        .context("Authorization is not basic utf 8")?;
+
+    value = value
+        .strip_prefix("Basic ")
+        .context("Header does not contain Basic ")?;
+
+    let value = BASE64_STANDARD
+        .decode(value)
+        .context("Failed to decode Basic credentials")?;
+    let decoded_credential =
+        String::from_utf8(value).context("Decoded credential are not valid utf8")?;
+    let mut credential = decoded_credential.splitn(2, ":");
+    let username = credential
+        .next()
+        .context("Basic does not contain a username")?
+        .to_string();
+    let password = credential
+        .next()
+        .context("Basic does not contain a password")?
+        .to_string();
+    Ok(Credential {
+        username,
+        password: Secret::new(password),
+    })
+}
+
+pub async fn validate_credential(connection: &PgPool, credential: &Credential)-> Result<uuid::Uuid, NewsletterError> {
+    let user_id = sqlx::query!(
+        r#"SELECT user_id FROM users WHERE
+                                    username = $1 and password = $2"#,
+        credential.username,
+        credential.password.expose_secret()
+    )
+    .fetch_optional(connection)
+    .await
+    .context("Failed to perform querry to validate authentification")
+    ?;
+
+    user_id.map(|row| row.user_id).ok_or_else(|| anyhow::anyhow!("Invalid combination of username and password")).map_err(NewsletterError::AuthError)
 }

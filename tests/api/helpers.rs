@@ -5,6 +5,7 @@ use wiremock::MockServer;
 use zero2prod::configuration::{DatabaseSettings, get_configuration};
 use zero2prod::startup::{Application, get_connection_pool};
 use zero2prod::telemetry::{get_subscriber, init_subscriber};
+use uuid::Uuid;
 
 static TRACING: Lazy<()> = Lazy::new(|| {
     let default_filter_level = "info".to_string();
@@ -35,13 +36,14 @@ pub async fn spawn_app() -> TestApp {
     configure_database(&configuration.database).await;
     let address = format!("http://127.0.0.1:{}", port);
     let _ = actix_web::rt::spawn(application.run_until_stop());
-
-    TestApp {
+    let app = TestApp {
         address,
         db_pool: get_connection_pool(&configuration.database),
         email_server,
         port: port,
-    }
+    };
+    add_test_user(&app.db_pool).await;
+    app
 }
 
 pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
@@ -102,9 +104,20 @@ impl TestApp {
         let html = get_link(&body["HtmlBody"].as_str().unwrap());
         ConfirmationLinks { plain_text, html }
     }
+
+    pub async fn get_test_user(&self) -> (String, String){
+        let user = sqlx::query!(r#"SELECT username, password FROM users"#).fetch_one(&self.db_pool).await.expect("Failed to create the user");
+        (user.username, user.password)
+    }
 }
 
 pub struct ConfirmationLinks {
     pub html: reqwest::Url,
     pub plain_text: reqwest::Url,
+}
+
+
+pub async fn add_test_user(connection : &PgPool){
+    sqlx::query!(r#"INSERT INTO users (user_id, username, password)
+                    VALUES ($1, $2, $3)"#, Uuid::new_v4(), Uuid::new_v4().to_string(), Uuid::new_v4().to_string()).execute(connection).await.expect("Could not add user to the database");
 }
