@@ -1,6 +1,7 @@
 use crate::helpers::{ConfirmationLinks, TestApp, spawn_app};
 use uuid::Uuid;
 use wiremock::matchers::{any, path};
+
 use wiremock::{Mock, ResponseTemplate};
 
 #[actix_web::test]
@@ -168,4 +169,48 @@ pub async fn without_authentification_should_be_rejected() {
         r#"Basic realm="publish""#,
         response.headers()["WWW-Authenticate"]
     );
+}
+
+#[actix_web::test]
+pub async fn should_refuse_non_valid_user() {
+    let app = spawn_app().await;
+    let username = Uuid::new_v4();
+    let password = Uuid::new_v4();
+
+    let request = reqwest::Client::new()
+        .post(format!("{}/newsletter", &app.address))
+        .json(&serde_json::json!({
+                "title": "Newsletter title",
+                "content": {
+        "text": "Newsletter body as plain text",
+        "html": "<p>Newsletter body as HTML</p>"
+                }
+                }))
+        .basic_auth(username, Some(password))
+        .send()
+        .await
+        .expect("Could not send request");
+    assert_eq!(401, request.status().as_u16());
+}
+
+
+#[actix_web::test]
+pub async fn should_refuse_invalid_password(){
+    let app = spawn_app().await;
+    let password = Uuid::new_v4();
+
+    let request = reqwest::Client::new()
+        .post(format!("{}/newsletter", &app.address))
+        .json(&serde_json::json!({
+                "title": "Newsletter title",
+                "content": {
+        "text": "Newsletter body as plain text",
+        "html": "<p>Newsletter body as HTML</p>"
+                }
+                }))
+        .basic_auth(&app.user.username, Some(password))
+        .send()
+        .await
+        .expect("Could not send request");
+    assert_eq!(401, request.status().as_u16());
 }

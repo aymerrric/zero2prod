@@ -25,6 +25,7 @@ pub fn run(
             .service(routes::subscribe)
             .service(routes::confirm)
             .service(routes::newsletter)
+            .route("/home", web::get().to(routes::home))
             .app_data(connection_pool.clone())
             .app_data(email_client.clone())
             .app_data(base_url.clone())

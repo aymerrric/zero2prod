@@ -1,3 +1,4 @@
+use actix_web::error::BlockingError;
 use tracing::{Subscriber, subscriber::set_global_default};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
@@ -32,4 +33,13 @@ pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) {
     // redirects logs to tracer
     LogTracer::init().expect("Failed to set logger");
     set_global_default(subscriber).expect("Failed to set subscriber");
+}
+
+pub fn spawn_blocking_track_in_span<F, R>(f: F) -> impl Future<Output = Result<R, BlockingError>>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    let current_span = tracing::Span::current();
+    actix_web::web::block(move || current_span.in_scope(f))
 }
