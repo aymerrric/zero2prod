@@ -2,12 +2,13 @@ use crate::{
     configuration::{DatabaseSettings, Settings},
     email_client, routes,
 };
-use actix_web::{self, App, HttpServer, dev::Server, web};
-use secrecy::Secret;
+use actix_web::{self, App, HttpServer, cookie::Key, dev::Server, web};
+use actix_web_flash_messages::FlashMessage;
+use secrecy::{ExposeSecret, Secret};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::net::TcpListener;
 use tracing_actix_web::TracingLogger;
-
+use actix_web_flash_messages::{FlashMessagesFramework, storage::CookieMessageStore};
 pub struct ApplicationBaseUrl(pub String);
 
 pub fn run(
@@ -20,8 +21,11 @@ pub fn run(
     let connection_pool = web::Data::new(connection);
     let email_client = web::Data::new(email_client);
     let base_url = web::Data::new(ApplicationBaseUrl(base_url));
+    let storage = CookieMessageStore::builder(Key::from(&hmac_secret.0.expose_secret().as_bytes())).build();
+    let message_framework = FlashMessagesFramework::builder(storage).build();
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(message_framework.clone())
             .wrap(TracingLogger::default())
             .service(routes::health_check)
             .service(routes::subscribe)

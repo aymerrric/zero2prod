@@ -6,6 +6,7 @@ use actix_web::{HttpResponse, ResponseError, web};
 use secrecy::Secret;
 use serde::Deserialize;
 use sqlx::PgPool;
+use actix_web_flash_messages::FlashMessage;
 
 #[derive(Deserialize)]
 pub struct FormData {
@@ -32,9 +33,9 @@ pub async fn login(
         }
         Err(e) => {
             let e: LoginError = e.into();
+            FlashMessage::error(e.to_string()).send();
             let  response = HttpResponse::SeeOther()
                 .insert_header((LOCATION, "/login"))
-                .cookie(Cookie::new("_flash", e.to_string()))
                 .finish();
             Err(InternalError::from_response(e, response))
         }

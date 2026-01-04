@@ -42,8 +42,7 @@ anyhow = "1.0.100"
 base64 = "0.22.1"
 argon2 = { version = "0.5.3", features = ["std"] }
 rand_core = { version = "0.9.3", features = ["std"] }
-urlencoding = "2.1.3"
-htmlescape = "0.3.1"
+actix-web-flash-messages = { version = "0.5", features = ["cookies"] }
 hmac = { version = "0.12", features = ["std"] }
 sha2 = "0.10"
 hex = "0.4.3"

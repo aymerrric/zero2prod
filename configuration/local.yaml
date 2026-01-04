@@ -1,6 +1,6 @@
 application:
   host : "127.0.0.1"
   base_url: "http://127.0.0.1"
-  hmac_secret: "secret"
+  hmac_secret: "secret is really long you can't find it bro haha,fks,qfqsdqsdk,hah"
 database:
   require_ssl: false
