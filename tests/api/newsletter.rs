@@ -193,9 +193,8 @@ pub async fn should_refuse_non_valid_user() {
     assert_eq!(401, request.status().as_u16());
 }
 
-
 #[actix_web::test]
-pub async fn should_refuse_invalid_password(){
+pub async fn should_refuse_invalid_password() {
     let app = spawn_app().await;
     let password = Uuid::new_v4();
 

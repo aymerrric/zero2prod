@@ -3,6 +3,7 @@ use argon2::PasswordHasher;
 use argon2::password_hash::{SaltString, rand_core::OsRng};
 use once_cell::sync::Lazy;
 use reqwest::Url;
+use reqwest::redirect;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use uuid::Uuid;
 use wiremock::MockServer;
@@ -40,12 +41,18 @@ pub async fn spawn_app() -> TestApp {
     let address = format!("http://127.0.0.1:{}", port);
     let _ = actix_web::rt::spawn(application.run_until_stop());
     let user = TestUser::generate();
+    let api_client = reqwest::ClientBuilder::new()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
     let app = TestApp {
         address,
         db_pool: get_connection_pool(&configuration.database),
         email_server,
         port: port,
         user,
+        api_client,
     };
     app.user.store(&app.db_pool).await;
     app
@@ -114,9 +121,22 @@ pub struct TestApp {
     pub email_server: MockServer,
     pub port: u16,
     pub user: TestUser,
+    pub api_client: reqwest::Client,
 }
 
 impl TestApp {
+    pub async fn post_logic<Body>(&self, body: &Body) -> reqwest::Response
+    where
+        Body: serde::Serialize,
+    {
+        self.api_client
+            .post(format!("{}/login", &self.address))
+            .form(&body)
+            .send()
+            .await
+            .expect("Could not send request")
+    }
+
     pub async fn post_subscription(&self, body: String) -> reqwest::Response {
         reqwest::Client::new()
             .post(format!("{}/subscription", &self.address))
@@ -152,9 +172,25 @@ impl TestApp {
             self.user.password.to_string(),
         )
     }
+
+    pub async fn get_login_html(&self) -> String {
+        self.api_client
+            .get(format!("{}/login", &self.address))
+            .send()
+            .await
+            .expect("Could not send the request")
+            .text()
+            .await
+            .expect("Could not load the html")
+    }
 }
 
 pub struct ConfirmationLinks {
     pub html: reqwest::Url,
     pub plain_text: reqwest::Url,
+}
+
+pub fn asser_is_redirect_to(response: &reqwest::Response, location: &str) {
+    assert_eq!(response.status().as_u16(), 303);
+    assert_eq!(response.headers().get("Location").unwrap(), location)
 }

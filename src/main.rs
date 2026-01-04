@@ -12,7 +12,10 @@ async fn main() -> std::io::Result<()> {
 
     Application::build(configuration)
         .await
-        .expect("Failed to build the application").run_until_stop().await.expect("Could not run the application");
+        .expect("Failed to build the application")
+        .run_until_stop()
+        .await
+        .expect("Could not run the application");
 
     Ok(())
 }
