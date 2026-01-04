@@ -1,15 +1,14 @@
 use actix_web::cookie::Cookie;
 use actix_web::http::header::ContentType;
-use actix_web::{HttpRequest, HttpResponse};
+use actix_web::{HttpResponse};
 use actix_web_flash_messages::{IncomingFlashMessages, Level};
 use std::fmt::Write;
 
-pub async fn login_form(flash_message : IncomingFlashMessages) -> HttpResponse {
+pub async fn login_form(flash_message: IncomingFlashMessages) -> HttpResponse {
     let mut error_html = String::new();
-    for m in flash_message.iter().filter(|m| m.level() == Level::Error)
-    {
+    for m in flash_message.iter().filter(|m| m.level() == Level::Error) {
         writeln!(error_html, r#"<p><i>{}</i></p>"#, m.content()).unwrap();
-    } 
+    }
     let mut response = HttpResponse::Ok()
         .content_type(ContentType::html())
         .body(format!(
@@ -40,6 +39,8 @@ name="password"
 </form>
 </body></html>"#,
         ));
-    response.add_removal_cookie(&Cookie::new("_flash", "")).unwrap();
+    response
+        .add_removal_cookie(&Cookie::new("_flash", ""))
+        .unwrap();
     response
 }

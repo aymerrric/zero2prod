@@ -11,3 +11,4 @@ email_client:
   sender_email : "aymeric.sabrie@polytechnique.edu"
   authorization_token : "test"
   timeout_millisecond : 10000
+redis_uri: "redis://127.0.0.1:6379"

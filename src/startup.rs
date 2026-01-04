@@ -2,29 +2,38 @@ use crate::{
     configuration::{DatabaseSettings, Settings},
     email_client, routes,
 };
+use actix_session::SessionMiddleware;
+use actix_session::storage::RedisSessionStore;
 use actix_web::{self, App, HttpServer, cookie::Key, dev::Server, web};
-use actix_web_flash_messages::FlashMessage;
+use actix_web_flash_messages::{FlashMessagesFramework, storage::CookieMessageStore};
 use secrecy::{ExposeSecret, Secret};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::net::TcpListener;
 use tracing_actix_web::TracingLogger;
-use actix_web_flash_messages::{FlashMessagesFramework, storage::CookieMessageStore};
+
 pub struct ApplicationBaseUrl(pub String);
 
-pub fn run(
+pub async fn run(
     listener: TcpListener,
     connection: PgPool,
     email_client: email_client::EmailClient,
     base_url: String,
     hmac_secret: HmacSecret,
-) -> Result<Server, std::io::Error> {
+    redis_uri: Secret<String>,
+) -> Result<Server, anyhow::Error> {
     let connection_pool = web::Data::new(connection);
     let email_client = web::Data::new(email_client);
     let base_url = web::Data::new(ApplicationBaseUrl(base_url));
-    let storage = CookieMessageStore::builder(Key::from(&hmac_secret.0.expose_secret().as_bytes())).build();
+    let secret_key = Key::from(&hmac_secret.0.expose_secret().as_bytes());
+    let storage = CookieMessageStore::builder(secret_key.clone()).build();
     let message_framework = FlashMessagesFramework::builder(storage).build();
+    let store = RedisSessionStore::new(redis_uri.expose_secret())
+        .await
+        .unwrap();
+
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(SessionMiddleware::new(store.clone(), secret_key.clone()))
             .wrap(message_framework.clone())
             .wrap(TracingLogger::default())
             .service(routes::health_check)
@@ -34,6 +43,7 @@ pub fn run(
             .route("/login", web::get().to(routes::login_form))
             .route("/login", web::post().to(routes::login))
             .route("/", web::get().to(routes::home))
+            .route("/admin/dashboard", web::get().to(routes::admin_dashboard))
             .app_data(connection_pool.clone())
             .app_data(email_client.clone())
             .app_data(base_url.clone())
@@ -41,8 +51,8 @@ pub fn run(
     })
     .listen(listener)?
     .run();
-
     Ok(server)
+
 }
 
 pub fn get_connection_pool(configuration: &DatabaseSettings) -> PgPool {
@@ -57,7 +67,7 @@ pub struct Application {
 }
 
 impl Application {
-    pub async fn build(configuration: Settings) -> Result<Application, std::io::Error> {
+    pub async fn build(configuration: Settings) -> Result<Self, anyhow::Error> {
         let connection_pool = get_connection_pool(&configuration.database);
         let adress = format!(
             "{}:{}",
@@ -84,7 +94,9 @@ impl Application {
             email_client,
             configuration.application.base_url,
             HmacSecret(configuration.application.hmac_secret),
-        )?;
+            configuration.redis_uri,
+        )
+        .await?;
 
         Ok(Self { port, server })
     }

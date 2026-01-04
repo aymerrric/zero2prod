@@ -50,6 +50,10 @@ hex = "0.4.3"
 version = "0.12.28"
 default-features = false
 features = ["json", "rustls-tls", "cookies"]
+[dependencies.actix-session]
+git = "https://github.com/actix/actix-extras"
+branch = "main"
+features = ["redis-session"]
 
 [dev-dependencies]
 fake = "4.4"

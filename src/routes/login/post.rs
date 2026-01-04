@@ -1,12 +1,11 @@
 use crate::authentication::{AuthError, Credential, validate_credential};
-use actix_web::cookie::{Cookie,};
 use actix_web::error::InternalError;
 use actix_web::http::header::LOCATION;
 use actix_web::{HttpResponse, ResponseError, web};
+use actix_web_flash_messages::FlashMessage;
 use secrecy::Secret;
 use serde::Deserialize;
 use sqlx::PgPool;
-use actix_web_flash_messages::FlashMessage;
 
 #[derive(Deserialize)]
 pub struct FormData {
@@ -34,7 +33,7 @@ pub async fn login(
         Err(e) => {
             let e: LoginError = e.into();
             FlashMessage::error(e.to_string()).send();
-            let  response = HttpResponse::SeeOther()
+            let response = HttpResponse::SeeOther()
                 .insert_header((LOCATION, "/login"))
                 .finish();
             Err(InternalError::from_response(e, response))
