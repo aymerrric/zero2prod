@@ -2,6 +2,7 @@ use argon2::Argon2;
 use argon2::PasswordHasher;
 use argon2::password_hash::{SaltString, rand_core::OsRng};
 use once_cell::sync::Lazy;
+use reqwest::Response;
 use reqwest::Url;
 use reqwest::redirect;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
@@ -41,6 +42,7 @@ pub async fn spawn_app() -> TestApp {
     let address = format!("http://127.0.0.1:{}", port);
     let _ = actix_web::rt::spawn(application.run_until_stop());
     let user = TestUser::generate();
+
     let api_client = reqwest::ClientBuilder::new()
         .cookie_store(true)
         .redirect(redirect::Policy::none())
@@ -95,6 +97,12 @@ impl TestUser {
         }
     }
 
+    pub async fn connect(&self, app: &TestApp) -> reqwest::Response {
+        let identifiers =
+            serde_json::json!({"username" : &self.username, "password" : &self.password});
+        app.post_logic(&identifiers).await
+    }
+
     async fn store(&self, connection: &PgPool) {
         let salt = SaltString::generate(&mut OsRng);
         let password_hash = Argon2::default()
@@ -113,6 +121,14 @@ impl TestUser {
         .await
         .expect("Could not create a new user");
     }
+
+    pub async fn logout(&self, app: &TestApp) -> reqwest::Response {
+        app.api_client
+            .post(format!("{}/admin/logout", app.address))
+            .send()
+            .await
+            .expect("Could not send request")
+    }
 }
 
 pub struct TestApp {
@@ -125,6 +141,48 @@ pub struct TestApp {
 }
 
 impl TestApp {
+    pub async fn get_admindashboard_html(&self) -> String {
+        self.get_admindashboard()
+            .await
+            .text()
+            .await
+            .expect("Should have been translated to text")
+    }
+
+    pub async fn get_admindashboard(&self) -> Response {
+        self.api_client
+            .get(format!("{}/admin/dashboard", self.address))
+            .send()
+            .await
+            .expect("Could not send request")
+    }
+    pub async fn get_change_password_html(&self) -> String {
+        self.get_change_password()
+            .await
+            .text()
+            .await
+            .expect("Could not read the html content")
+    }
+
+    pub async fn get_change_password(&self) -> reqwest::Response {
+        self.api_client
+            .get(format!("{}/admin/change/password", &self.address))
+            .send()
+            .await
+            .expect("Could not send the request")
+    }
+
+    pub async fn post_change_password<Body>(&self, body: &Body) -> reqwest::Response
+    where
+        Body: serde::Serialize,
+    {
+        self.api_client
+            .post(format!("{}/admin/change/password", &self.address))
+            .form(body)
+            .send()
+            .await
+            .expect("Could not send the request")
+    }
     pub async fn post_logic<Body>(&self, body: &Body) -> reqwest::Response
     where
         Body: serde::Serialize,

@@ -1,11 +1,11 @@
 use crate::{
-    configuration::{DatabaseSettings, Settings},
-    email_client, routes,
+    authentication::reject_anonymous_user, configuration::{DatabaseSettings, Settings}, email_client, routes
 };
 use actix_session::SessionMiddleware;
 use actix_session::storage::RedisSessionStore;
 use actix_web::{self, App, HttpServer, cookie::Key, dev::Server, web};
 use actix_web_flash_messages::{FlashMessagesFramework, storage::CookieMessageStore};
+use actix_web_lab::middleware::from_fn;
 use secrecy::{ExposeSecret, Secret};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::net::TcpListener;
@@ -43,7 +43,17 @@ pub async fn run(
             .route("/login", web::get().to(routes::login_form))
             .route("/login", web::post().to(routes::login))
             .route("/", web::get().to(routes::home))
-            .route("/admin/dashboard", web::get().to(routes::admin_dashboard))
+            .route("/admin/logout", web::post().to(routes::logout))
+
+            .service(
+                    web::scope("/admin")
+                    .wrap(from_fn(reject_anonymous_user))
+                    .route("/dashboard", web::get().to(routes::admin_dashboard))
+                    .route("/change/password", web::get().to(routes::form_password))
+                    .route("/change/password", web::post().to(routes::password_change))
+                    .route("/logout", web::post().to(routes::logout)),
+                    )
+                    
             .app_data(connection_pool.clone())
             .app_data(email_client.clone())
             .app_data(base_url.clone())
@@ -52,7 +62,6 @@ pub async fn run(
     .listen(listener)?
     .run();
     Ok(server)
-
 }
 
 pub fn get_connection_pool(configuration: &DatabaseSettings) -> PgPool {
